@@ -18,11 +18,11 @@ import struct
 
 from . import _tbvnetworkinterface_defaults as defaults
 
-from ... import _internals
-from ...misc._timer import get_time
-from ...misc._miscellaneous import byte2unicode
-from ...io._input_output import Input, Output
-from ...io.extras._tcpclient import TcpClient
+from expyriment import _internals
+from expyriment.misc._timer import get_time
+from expyriment.misc._miscellaneous import byte2unicode, unicode2byte
+from expyriment.io._input_output import Input, Output
+from ._tcpclient import TcpClient
 
 
 class TbvNetworkInterface(Input, Output):
@@ -140,7 +140,7 @@ class TbvNetworkInterface(Input, Output):
                                             struct.unpack('!i', data[4:8])[0],
                                             struct.unpack('!i', data[8:])[0])
             except:
-                raise RuntimeError("Requesting a socket failed!")
+                raise RuntimeError("Connecting to TBV failed!")
             self._is_connected = True
             if self._logging:
                 _internals.active_exp._event_file_log(
@@ -154,7 +154,7 @@ class TbvNetworkInterface(Input, Output):
             for arg in args:
                 arg_length += len(arg)
         data = struct.pack('!q', length + 5 + arg_length) + \
-            "\x00\x00\x00{0}{1}\x00".format(chr(length + 1), message)
+            b"\x00\x00\x00" + unicode2byte(chr(length + 1)) + message + b"\x00"
         if len(args) > 0:
             for arg in args:
                 data += arg
@@ -192,6 +192,7 @@ class TbvNetworkInterface(Input, Output):
 
         start = get_time()
         self._tcp.clear()
+        request = unicode2byte(request)
         self._send(request, *args)
         data = self._wait()
         if data is None:
@@ -488,20 +489,20 @@ class TbvNetworkInterface(Input, Output):
 
         Returns
         -------
-        nr_rois : int
+        n_rois : int
             The number of ROIs.
         rt : int
             The time it took to get the data.
 
         """
 
-        nr_rois, rt = self.request_data("tGetNrOfROIs")
-        if nr_rois is None:
+        n_rois, rt = self.request_data("tGetNrOfROIs")
+        if n_rois is None:
             return None, rt
-        elif nr_rois[:14] == "Wrong request!":
-            raise Exception("Wrong request!: '{0}'".format(nr_rois[19:-1]))
+        elif n_rois[:14] == "Wrong request!":
+            raise Exception("Wrong request!: '{0}'".format(n_rois[19:-1]))
         else:
-            return struct.unpack('!i', nr_rois)[0], rt
+            return struct.unpack('!i', n_rois)[0], rt
 
     def get_mean_of_roi(self, roi):
         """Get the mean of a ROI.
@@ -925,7 +926,7 @@ class TbvNetworkInterface(Input, Output):
             return ([struct.unpack('!f', data[x * 4:x * 4 + 4])[0]
                      for x in range(0, len(data) // 4)], rt)
 
-    # SVM Access Functions
+    # SVM Access
     def get_number_of_classes(self):
         """Get the number of classes.
 
@@ -968,3 +969,128 @@ class TbvNetworkInterface(Input, Output):
         else:
             return ([struct.unpack('!f', data[x * 4:x * 4 + 4])[0]
                      for x in range(0, len(data) // 4)], rt)
+
+    # Functional Connectivity
+    def get_pearson_correlation(self, window_size):  # TODO: Needs testing!
+        """Get Pearson correlation at current time point.
+
+        Parameters
+        ----------
+        window_size : int
+            The size of the window in volumes.
+
+        Returns
+        -------
+        correlations : list
+            The list of correlations between pairs of ROIs
+            [(x, y) for x in rois for y in rois if x < y].
+        rt : int
+            The time it took to get the data.
+
+        """
+
+        window_size = struct.pack('!i', window_size)
+        data, rt = self.request_data(
+            "tGetPearsonCorrelation", window_size)
+        if data is None:
+            return None, rt
+        elif data[:14] == "Wrong request!":
+            raise Exception("Wrong request!: '{0}'".format(data[19:-1]))
+        else:
+            return ([struct.unpack('!f', data[x * 4:x * 4 + 4])[0]
+                     for x in range(1, len(data) // 4)], rt)
+
+    def get_pearson_correlation_at_time_point(self, window_size, time_point):  # TODO: Needs testing!
+        """Get Pearson correlation at specified time point.
+
+        Parameters
+        ----------
+        window_size : int
+            The size of the window in volumes.
+        time_point : int
+            The time point.
+
+        Returns
+        -------
+        correlations : list
+            The list of correlations between pairs of ROIs
+            [(x, y) for x in rois for y in rois if x < y].
+        rt : int
+            The time it took to get the data.
+
+        """
+
+        window_size = struct.pack('!i', window_size)
+        time_point = struct.pack('!i', time_point)
+        data, rt = self.request_data(
+            "tGetPearsonCorrelationAtTimePoint", window_size, time_point)
+        if data is None:
+            return None, rt
+        elif data[:14] == "Wrong request!":
+            raise Exception("Wrong request!: '{0}'".format(data[19:-1]))
+        else:
+            return ([struct.unpack('!f', data[x * 4:x * 4 + 4])[0]
+                     for x in range(2, len(data) // 4)], rt)
+
+    def get_partial_correlation(self, window_size):  # TODO: Needs testing!
+        """Get partial correlation at current time point.
+
+        Parameters
+        ----------
+        window_size : int
+            The size of the window in volumes.
+
+        Returns
+        -------
+        correlations : list
+            The list of correlations between pairs of ROIs
+            [(x, y) for x in rois for y in rois if x < y]
+            while controlling for effects of combination of remaining ROIs.
+        rt : int
+            The time it took to get the data.
+
+        """
+
+        window_size = struct.pack('!i', window_size)
+        data, rt = self.request_data(
+            "tGetPartialCorrelation", window_size)
+        if data is None:
+            return None, rt
+        elif data[:14] == "Wrong request!":
+            raise Exception("Wrong request!: '{0}'".format(data[19:-1]))
+        else:
+            return ([struct.unpack('!f', data[x * 4:x * 4 + 4])[0]
+                     for x in range(1, len(data) // 4)], rt)
+
+    def get_partial_correlation_at_time_point(self, window_size, time_point):  # TODO: Needs testing!
+        """Get partial correlation at specified time point.
+
+        Parameters
+        ----------
+        window_size : int
+            The size of the window in volumes.
+        time_point : int
+            The time point.
+
+        Returns
+        -------
+        correlations : list
+            The list of correlations between pairs of ROIs
+            [(x, y) for x in rois for y in rois if x < y]
+            while controlling for effects of combination of remaining ROIs.
+        rt : int
+            The time it took to get the data.
+
+        """
+
+        window_size = struct.pack('!i', window_size)
+        time_point = struct.pack('!i', time_point)
+        data, rt = self.request_data(
+            "tGetPartialCorrelationAtTimePoint", window_size, time_point)
+        if data is None:
+            return None, rt
+        elif data[:14] == "Wrong request!":
+            raise Exception("Wrong request!: '{0}'".format(data[19:-1]))
+        else:
+            return ([struct.unpack('!f', data[x * 4:x * 4 + 4])[0]
+                     for x in range(2, len(data) // 4)], rt)
